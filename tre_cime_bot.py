@@ -242,7 +242,7 @@ def perform_check(force_chat_id=None):
                 send(
                     force_chat_id,
                     "🔎 Check completed successfully.\n"
-                    "No available slots detected between 02:00 and 07:00.\n"
+                    "No available slots detected between 01:00 and 07:00.\n"
                     f"HTTP {r.status_code}"
                 )
 
@@ -297,7 +297,7 @@ def command_loop():
                         chat_id,
                         "✅ Tre Cime watcher activated.\n\n"
                         "من هر ساعت تاریخ 2 Sep 2026 را برای "
-                        "ساعت‌های 02:00 تا 07:00 چک می‌کنم.\n"
+                        "ساعت‌های 01:00 تا 07:00 چک می‌کنم.\n"
                         "اگر یکی از ساعت‌ها باز شود، همین‌جا پیام می‌دهم.\n\n"
                         "/check — بررسی فوری\n"
                         "/status — وضعیت آخرین بررسی\n"
