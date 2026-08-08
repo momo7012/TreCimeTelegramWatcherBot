@@ -1,103 +1,67 @@
-# Tre Cime Telegram Watcher — ready version
+# Tre Cime Authenticated Telegram Watcher
 
-این نسخه برای این کار ساخته شده:
+مشکل نسخه قبلی این بود که endpoint بدون login به صفحه عمومی Auronzo redirect می‌شد.
 
-- تاریخ: 2026-09-02
-- نوع خودرو: permitTypeId=1
-- پارکینگ/sector: sectorId=10
-- ساعت‌ها: 01:00، 02:00، 03:00، 04:00، 05:00، 06:00، 07:00
-- بررسی: هر 1 ساعت
-- اعلان: فقط وقتی ساعتی که قبلاً بسته بوده باز شود
+این نسخه با Playwright وارد حساب کاربری پورتال می‌شود و سپس endpoint scheduler
+را داخل همان session لاگین‌شده با `fetch(... credentials: "include")` صدا می‌زند.
 
-## چیزی که لازم داری
+## Railway Variables
 
-فقط Telegram Bot Token.
-
-### ساخت Bot Token
-
-1. در Telegram برو به `@BotFather`
-2. `/newbot`
-3. یک اسم و username بده
-4. Token را کپی کن
-
-## اجرای ساده روی کامپیوتر
-
-```bash
-pip install -r requirements.txt
-```
-
-macOS/Linux:
-```bash
-export TELEGRAM_BOT_TOKEN="توکن"
-python tre_cime_bot.py
-```
-
-Windows PowerShell:
-```powershell
-$env:TELEGRAM_BOT_TOKEN="توکن"
-python tre_cime_bot.py
-```
-
-بعد در Telegram بات خودت را باز کن و:
-
-```text
-/start
-```
-
-بزن.
-
-دیگر CHAT_ID لازم نیست؛ بات خودش chat id را از /start ثبت می‌کند.
-
-## تست
-
-در Telegram بزن:
-
-```text
-/check
-```
-
-اگر این را دیدی:
-
-```text
-Check completed successfully.
-No available slots detected between 02:00 and 07:00.
-HTTP 200
-```
-
-یعنی endpoint رسمی درست جواب داده و مانیتور کار می‌کند.
-
-بعد:
-
-```text
-/status
-```
-
-آخرین زمان چک و HTTP status را می‌بینی.
-
-## اجرای 24/7
-
-برای اینکه با خاموش شدن لپ‌تاپ متوقف نشود باید روی سرور باشد.
-
-این پروژه Dockerfile دارد و مستقیم روی Railway/VPS قابل اجرا است.
-
-روی Railway فقط این Environment Variable را وارد کن:
+سه Secret/Variable لازم است:
 
 ```text
 TELEGRAM_BOT_TOKEN=...
+AURONZO_EMAIL=ایمیل حساب پورتال Auronzo
+AURONZO_PASSWORD=پسورد حساب پورتال Auronzo
 ```
 
-بعد Deploy و در تلگرام `/start`.
+اطلاعات login را داخل کد نگذار. فقط در Railway Variables/Secrets قرار بده.
 
-## Endpoint رسمی مورد استفاده
+## Deploy
+
+پروژه را به GitHub بفرست و Railway را به repo وصل کن.
+Dockerfile آماده است.
+
+بعد از Deploy در Telegram:
 
 ```text
-https://pass.auronzo.info/Frontoffice/Abbonamenti/GetDurateScheduler
+/start
+/check
 ```
 
-پارامترها:
+نسخه تست عمداً `01:00` تا `07:00` را مانیتور می‌کند.
+
+چون 01:00 را الان به‌عنوان یک ساعت موجود می‌شناسیم، `/check` باید چیزی شبیه:
 
 ```text
-permitTypeId=1
-sectorId=10
-selectedDate=2026-09-02
+Authenticated check completed.
+HTTP: 200
+
+✅ 01:00 — 12 available
 ```
+
+برگرداند.
+
+اگر 01:00 پیدا نشد:
+
+```text
+/raw
+```
+
+را بزن. این بار RAW باید از خود `GetDurateScheduler` باشد، نه صفحه WordPress عمومی.
+
+## بعد از تایید
+
+وقتی 01:00 درست دیده شد، کافی است این خط:
+
+```python
+TARGET_HOURS = {1, 2, 3, 4, 5, 6, 7}
+```
+
+به این تبدیل شود:
+
+```python
+TARGET_HOURS = {2, 3, 4, 5, 6, 7}
+```
+
+تا فقط ساعت‌های موردنظر نهایی مانیتور شوند.
