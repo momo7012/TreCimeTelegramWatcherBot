@@ -14,7 +14,7 @@ BASE = "https://pass.auronzo.info/Frontoffice"
 ENDPOINT = BASE + "/Abbonamenti/GetDurateScheduler"
 
 TARGET_DATE = os.getenv("TARGET_DATE", "2026-09-02")
-TARGET_HOURS = {2, 3, 4, 5, 6, 7}
+TARGET_HOURS = {1, 2, 3, 4, 5, 6, 7}
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "3600"))
 
 SUBSCRIBERS_FILE = Path("subscribers.json")
