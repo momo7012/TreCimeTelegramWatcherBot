@@ -3,6 +3,7 @@ import os
 import re
 import time
 import threading
+import html
 from pathlib import Path
 from datetime import datetime
 
@@ -134,49 +135,93 @@ def normalize_hour(raw):
     return hour
 
 
-def html_to_text(html):
-    text = re.sub(r"<script\b[^>]*>.*?</script>", " ", html, flags=re.I | re.S)
-    text = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.I | re.S)
-    text = re.sub(r"<[^>]+>", " ", text)
-    replacements = {
-        "&nbsp;": " ",
-        "&amp;": "&",
-        "&#39;": "'",
-        "&quot;": '"',
-    }
-    for a, b in replacements.items():
-        text = text.replace(a, b)
-    return re.sub(r"\s+", " ", text).strip()
+def flatten_payload(payload):
+    """Turn HTML/JSON responses into one searchable string."""
+    parts = []
+
+    def walk(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                parts.append(str(k))
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+        elif x is not None:
+            parts.append(str(x))
+
+    raw = payload
+    try:
+        parsed = json.loads(payload)
+        walk(parsed)
+        raw = " ".join(parts)
+    except Exception:
+        pass
+
+    # Decode HTML entities and strip tags, but preserve textual attributes too.
+    raw = html.unescape(raw)
+    raw = re.sub(r"<script\b[^>]*>.*?</script>", " ", raw, flags=re.I | re.S)
+    raw = re.sub(r"<style\b[^>]*>.*?</style>", " ", raw, flags=re.I | re.S)
+    raw = re.sub(r"<[^>]+>", " ", raw)
+    return re.sub(r"\s+", " ", raw).strip()
 
 
-def parse_slots(html):
-    text = html_to_text(html)
+def html_to_text(payload):
+    return flatten_payload(payload)
 
-    patterns = [
-        re.compile(
-            r"(?:From|Dalle|Da)\s+"
-            r"(\d{1,2}(?::\d{2})?\s*(?:AM|PM)?)"
-            r"\s*[-–—]\s*"
-            r"(\d+)\s*"
-            r"(?:SEATS?\s+AVAILABLE|POSTI\s+DISPONIBILI)",
-            re.I,
-        ),
-        re.compile(
-            r"(\d{1,2}(?::\d{2})?\s*(?:AM|PM)?)"
-            r".{0,60}?"
-            r"(\d+)\s*"
-            r"(?:SEATS?\s+AVAILABLE|POSTI\s+DISPONIBILI)",
-            re.I,
-        ),
-    ]
+
+def parse_slots(payload):
+    text = flatten_payload(payload)
 
     found = {}
-    for pattern in patterns:
-        for m in pattern.finditer(text):
-            hour = normalize_hour(m.group(1))
-            seats = int(m.group(2))
+
+    # Common explicit formats.
+    explicit_patterns = [
+        r"(?:From|Dalle|Da)\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?"
+        r".{0,120}?(\d+)\s*(?:SEATS?|PLACES?|POSTI)\s*(?:AVAILABLE|DISPONIBILI)?",
+
+        r"(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?"
+        r".{0,120}?(\d+)\s*(?:SEATS?\s+AVAILABLE|PLACES?\s+AVAILABLE|POSTI\s+DISPONIBILI)",
+    ]
+
+    for pat in explicit_patterns:
+        for m in re.finditer(pat, text, flags=re.I):
+            hour = int(m.group(1))
+            ampm = (m.group(3) or "").upper()
+            if ampm == "AM" and hour == 12:
+                hour = 0
+            elif ampm == "PM" and hour != 12:
+                hour += 12
+
+            seats = int(m.group(4))
             if hour in TARGET_HOURS and seats > 0:
                 found[hour] = max(found.get(hour, 0), seats)
+
+    # Fallback: for every watched hour, inspect a local text window around it.
+    # This catches formats such as "01:00 ... availability ... 12".
+    for target in TARGET_HOURS:
+        hour_forms = [
+            rf"\b0?{target}:00\b",
+            rf"\b{target}:00\s*AM\b" if target < 12 else rf"\b{target}:00\b",
+        ]
+        for form in hour_forms:
+            for hm in re.finditer(form, text, flags=re.I):
+                lo = max(0, hm.start() - 80)
+                hi = min(len(text), hm.end() + 220)
+                window = text[lo:hi]
+
+                # Number immediately associated with availability wording.
+                candidates = [
+                    r"(\d+)\s*(?:SEATS?|PLACES?|POSTI)\s*(?:AVAILABLE|DISPONIBILI)",
+                    r"(?:AVAILABLE|DISPONIBILI).{0,30}?(\d+)",
+                    r"(?:SEATS?|PLACES?|POSTI).{0,30}?(\d+)",
+                ]
+                for cp in candidates:
+                    cm = re.search(cp, window, flags=re.I)
+                    if cm:
+                        seats = int(cm.group(1))
+                        if seats > 0:
+                            found[target] = max(found.get(target, 0), seats)
 
     return sorted(found.items())
 
@@ -241,9 +286,10 @@ def perform_check(force_chat_id=None):
             else:
                 send(
                     force_chat_id,
-                    "🔎 Check completed successfully.\n"
-                    "No available slots detected between 01:00 and 07:00.\n"
-                    f"HTTP {r.status_code}"
+                    "🔎 Check completed, but parser found no open slots.\n"
+                    f"HTTP {r.status_code}\n"
+                    "Since 01:00 is expected to be open, please send /raw next. "
+                    "That will show the actual scheduler response so the parser can be verified."
                 )
 
     except Exception as e:
@@ -301,6 +347,7 @@ def command_loop():
                         "اگر یکی از ساعت‌ها باز شود، همین‌جا پیام می‌دهم.\n\n"
                         "/check — بررسی فوری\n"
                         "/status — وضعیت آخرین بررسی\n"
+                        "/raw — نمایش پاسخ خام سایت برای دیباگ\n"
                         "/stop — توقف اعلان برای این چت"
                     )
 
@@ -323,6 +370,21 @@ def command_loop():
                         f"Open slots: {slots_txt}\n"
                         f"Error: {last_status.get('error')}"
                     )
+
+                elif text == "/raw":
+                    try:
+                        r = fetch_scheduler()
+                        body = re.sub(r"\s+", " ", r.text)
+                        preview = body[:3500]
+                        send(
+                            chat_id,
+                            "🧪 RAW RESPONSE\n"
+                            f"HTTP: {r.status_code}\n"
+                            f"Content-Type: {r.headers.get('content-type')}\n\n"
+                            + preview
+                        )
+                    except Exception as e:
+                        send(chat_id, f"❌ RAW failed: {type(e).__name__}: {e}")
 
                 elif text == "/stop":
                     users = get_subscribers()
